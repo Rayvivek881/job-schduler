@@ -1,0 +1,188 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: job-scheduler-postgres
+    environment:
+      POSTGRES_DB: job_scheduler
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - job-scheduler-network
+
+  # Zookeeper (required for Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: job-scheduler-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - job-scheduler-network
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: job-scheduler-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - job-scheduler-network
+
+  # API Server
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-scheduler-api
+    command: ["./job-scheduler", "api-server"]
+    ports:
+      - "8000:8000"
+    environment:
+      # Application
+      APP_ENV: development
+      API_KEY: ${API_KEY:-dev-api-key-change-me}
+      MAX_REQUESTS_PER_MINUTE: ${MAX_REQUESTS_PER_MINUTE:-1000}
+      
+      # Database
+      PG_DB_HOST: postgres
+      PG_DB_PORT: 5432
+      PG_DB_DATABASE: job_scheduler
+      PG_DB_USERNAME: postgres
+      PG_DB_PASSWORD: postgres
+      PG_DB_DEBUG: ${PG_DB_DEBUG:-true}
+      PG_DB_SSL: ${PG_DB_SSL:-false}
+      
+      # Kafka
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_VERSION: ${KAFKA_VERSION:-3.6.0}
+      JOBS_TOPIC: ${JOBS_TOPIC:-jobs-topic}
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-jobs-consumer-group}
+      
+      # Job Configuration
+      TICKER_INTERVAL: ${TICKER_INTERVAL:-1}
+      JOB_EXECUTION_TIMEOUT: ${JOB_EXECUTION_TIMEOUT:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - job-scheduler-network
+    restart: unless-stopped
+
+  # Scheduler (First-time jobs)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-scheduler-scheduler
+    command: ["./job-scheduler", "scheduler", "first-time"]
+    environment:
+      # Application
+      APP_ENV: development
+      
+      # Database
+      PG_DB_HOST: postgres
+      PG_DB_PORT: 5432
+      PG_DB_DATABASE: job_scheduler
+      PG_DB_USERNAME: postgres
+      PG_DB_PASSWORD: postgres
+      PG_DB_DEBUG: ${PG_DB_DEBUG:-false}
+      PG_DB_SSL: ${PG_DB_SSL:-false}
+      
+      # Kafka
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_VERSION: ${KAFKA_VERSION:-3.6.0}
+      JOBS_TOPIC: ${JOBS_TOPIC:-jobs-topic}
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-jobs-consumer-group}
+      
+      # Job Configuration
+      TICKER_INTERVAL: ${TICKER_INTERVAL:-1}
+      JOB_EXECUTION_TIMEOUT: ${JOB_EXECUTION_TIMEOUT:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - job-scheduler-network
+    restart: unless-stopped
+
+  # Consumer (processes jobs from Kafka)
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-scheduler-consumer
+    command: ["./job-scheduler", "consumer"]
+    environment:
+      # Application
+      APP_ENV: development
+      
+      # Database
+      PG_DB_HOST: postgres
+      PG_DB_PORT: 5432
+      PG_DB_DATABASE: job_scheduler
+      PG_DB_USERNAME: postgres
+      PG_DB_PASSWORD: postgres
+      PG_DB_DEBUG: ${PG_DB_DEBUG:-false}
+      PG_DB_SSL: ${PG_DB_SSL:-false}
+      
+      # Kafka
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_VERSION: ${KAFKA_VERSION:-3.6.0}
+      JOBS_TOPIC: ${JOBS_TOPIC:-jobs-topic}
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-jobs-consumer-group}
+      
+      # Job Configuration
+      TICKER_INTERVAL: ${TICKER_INTERVAL:-1}
+      JOB_EXECUTION_TIMEOUT: ${JOB_EXECUTION_TIMEOUT:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - job-scheduler-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # Scale consumers horizontally
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  job-scheduler-network:
+    driver: bridge

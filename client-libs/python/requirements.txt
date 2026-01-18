@@ -1,0 +1,13 @@
+# Python DAG Builders for Job Scheduler
+# Minimal dependencies - uses only Python standard library
+
+# No external dependencies required
+# All functionality uses Python standard library only:
+# - uuid (UUID generation)
+# - datetime (Timestamps)
+# - typing (Type hints)
+# - re (Regex for templates)
+
+# Optional: For making API requests (examples only)
+# Uncomment if you need to make HTTP requests:
+# requests>=2.31.0

@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: job-scheduler-ingress
+  labels:
+    app: job-scheduler
+    component: api-server
+  annotations:
+    # Kubernetes Ingress Controller annotations
+    # Uncomment and adjust based on your ingress controller:
+    
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # Rate limiting (if supported by ingress controller)
+    # nginx.ingress.kubernetes.io/limit-rps: "100"
+    # nginx.ingress.kubernetes.io/limit-connections: "50"
+spec:
+  ingressClassName: nginx  # Change to your ingress class
+  rules:
+  - host: job-scheduler.example.com  # Change to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: job-scheduler-api
+            port:
+              number: 8000
+  # TLS configuration (uncomment and configure if using HTTPS)
+  # tls:
+  # - hosts:
+  #   - job-scheduler.example.com
+  #   secretName: job-scheduler-tls

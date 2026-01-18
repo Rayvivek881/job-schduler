@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+job-scheduler
+dist/
+
+# Test files
+*_test.go
+test/
+tests/
+
+# Deployment files (not needed in image)
+deploy/
+postman/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp

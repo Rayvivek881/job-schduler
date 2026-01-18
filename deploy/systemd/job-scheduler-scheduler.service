@@ -1,0 +1,30 @@
+[Unit]
+Description=Job Scheduler - First-time Jobs Scheduler
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/job-scheduler
+ExecStart=/opt/job-scheduler/job-scheduler scheduler first-time
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=job-scheduler-scheduler
+
+# Environment file
+EnvironmentFile=/opt/job-scheduler/.env
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits (adjust as needed)
+LimitNOFILE=65536
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

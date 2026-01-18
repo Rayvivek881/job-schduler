@@ -1,0 +1,340 @@
+name: Deploy Job Scheduler
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Docker image tag (leave empty for latest)'
+        required: false
+        type: string
+
+env:
+  GO_VERSION: '1.24'
+  REGISTRY: docker.io  # Change to your registry
+  IMAGE_NAME: ${{ github.repository }}
+  K8S_NAMESPACE_STAGING: job-scheduler-staging
+  K8S_NAMESPACE_PROD: job-scheduler-prod
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl for staging
+        run: |
+          echo "${{ secrets.K8S_CONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+          kubectl config set-context --current --namespace=${{ env.K8S_NAMESPACE_STAGING }}
+
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update deployment manifests with image tag
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          
+          # Update image in all deployment files
+          find deploy/k8s -name "*-deployment.yaml" -type f -exec sed -i "s|image: .*|image: ${IMAGE}|g" {} \;
+          
+          echo "Updated deployments to use image: ${IMAGE}"
+
+      - name: Deploy ConfigMap
+        run: |
+          kubectl apply -f deploy/k8s/configmap.yaml
+          kubectl rollout status configmap/job-scheduler-config --timeout=30s || true
+
+      - name: Deploy Secrets
+        run: |
+          # Secrets should be created manually or via sealed-secrets
+          # This step verifies secrets exist
+          if ! kubectl get secret job-scheduler-secrets 2>/dev/null; then
+            echo "Warning: Secret job-scheduler-secrets not found. Please create it manually."
+            echo "kubectl create secret generic job-scheduler-secrets --from-literal=API_KEY=... --from-literal=PG_DB_PASSWORD=... --from-literal=KAFKA_USERNAME=... --from-literal=KAFKA_PASSWORD=..."
+            exit 1
+          fi
+
+      - name: Deploy API Server
+        run: |
+          kubectl apply -f deploy/k8s/api-server-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-api --timeout=5m
+
+      - name: Deploy Scheduler
+        run: |
+          kubectl apply -f deploy/k8s/scheduler-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-scheduler --timeout=5m
+
+      - name: Deploy Consumers
+        run: |
+          kubectl apply -f deploy/k8s/consumer-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-consumer --timeout=5m
+
+      - name: Deploy Ingress (optional)
+        run: |
+          if [ -f deploy/k8s/ingress.yaml ]; then
+            kubectl apply -f deploy/k8s/ingress.yaml
+          else
+            echo "Ingress file not found, skipping..."
+          fi
+
+      - name: Wait for pods to be ready
+        run: |
+          kubectl wait --for=condition=ready pod -l app=job-scheduler --timeout=5m || true
+
+      - name: Get API service endpoint
+        id: api-endpoint
+        run: |
+          # Try to get ingress endpoint
+          INGRESS_HOST=$(kubectl get ingress job-scheduler-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          
+          if [ -n "$INGRESS_HOST" ]; then
+            echo "url=http://${INGRESS_HOST}" >> $GITHUB_OUTPUT
+          else
+            # Use port-forward for testing
+            echo "url=http://localhost:8000" >> $GITHUB_OUTPUT
+            echo "port-forward=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Port-forward API server (if needed)
+        if: steps.api-endpoint.outputs.port-forward == 'true'
+        run: |
+          kubectl port-forward svc/job-scheduler-api 8000:8000 &
+          sleep 5
+
+      - name: Run smoke tests
+        env:
+          API_URL: ${{ steps.api-endpoint.outputs.url }}
+          API_KEY: ${{ secrets.API_KEY_STAGING }}
+        run: |
+          echo "Running smoke tests against: $API_URL"
+          
+          # Wait for health endpoint to be available
+          echo "Waiting for API to be ready..."
+          for i in {1..30}; do
+            if curl -f -s "${API_URL}/health" > /dev/null 2>&1; then
+              echo "API is ready!"
+              break
+            fi
+            echo "Attempt $i/30: API not ready, waiting 5 seconds..."
+            sleep 5
+          done
+          
+          # Run verification script
+          if [ -f deploy/verify.sh ]; then
+            chmod +x deploy/verify.sh
+            bash deploy/verify.sh "$API_URL" || {
+              echo "Smoke tests failed!"
+              exit 1
+            }
+          else
+            # Basic health check
+            echo "Running basic health check..."
+            HEALTH_STATUS=$(curl -s "${API_URL}/health" | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+            if [ "$HEALTH_STATUS" != "ok" ] && [ "$HEALTH_STATUS" != "degraded" ]; then
+              echo "Health check failed: status=$HEALTH_STATUS"
+              exit 1
+            fi
+            echo "Health check passed: status=$HEALTH_STATUS"
+          fi
+
+      - name: Check pod status
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -l app=job-scheduler
+          
+          echo "=== API Server Logs (last 20 lines) ==="
+          kubectl logs -l component=api-server --tail=20 || true
+          
+          echo "=== Scheduler Logs (last 20 lines) ==="
+          kubectl logs -l component=scheduler --tail=20 || true
+          
+          echo "=== Consumer Logs (last 20 lines) ==="
+          kubectl logs -l component=consumer --tail=20 || true
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production' && needs.deploy-staging.result == 'success' || github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl for production
+        run: |
+          echo "${{ secrets.K8S_CONFIG_PROD }}" | base64 -d > $HOME/.kube/config
+          kubectl config set-context --current --namespace=${{ env.K8S_NAMESPACE_PROD }}
+
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update deployment manifests with image tag
+        run: |
+          IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          
+          # Update image in all deployment files
+          find deploy/k8s -name "*-deployment.yaml" -type f -exec sed -i "s|image: .*|image: ${IMAGE}|g" {} \;
+          
+          echo "Updated deployments to use image: ${IMAGE}"
+
+      - name: Deploy ConfigMap
+        run: |
+          kubectl apply -f deploy/k8s/configmap.yaml
+          kubectl rollout status configmap/job-scheduler-config --timeout=30s || true
+
+      - name: Deploy Secrets
+        run: |
+          # Secrets should be created manually or via sealed-secrets
+          if ! kubectl get secret job-scheduler-secrets 2>/dev/null; then
+            echo "Error: Secret job-scheduler-secrets not found. Please create it manually."
+            exit 1
+          fi
+
+      - name: Deploy API Server (rolling update)
+        run: |
+          kubectl apply -f deploy/k8s/api-server-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-api --timeout=10m
+
+      - name: Deploy Scheduler
+        run: |
+          kubectl apply -f deploy/k8s/scheduler-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-scheduler --timeout=10m
+
+      - name: Deploy Consumers (rolling update)
+        run: |
+          kubectl apply -f deploy/k8s/consumer-deployment.yaml
+          kubectl rollout status deployment/job-scheduler-consumer --timeout=10m
+
+      - name: Deploy Ingress (optional)
+        run: |
+          if [ -f deploy/k8s/ingress.yaml ]; then
+            kubectl apply -f deploy/k8s/ingress.yaml
+          fi
+
+      - name: Wait for pods to be ready
+        run: |
+          kubectl wait --for=condition=ready pod -l app=job-scheduler --timeout=10m
+
+      - name: Get API service endpoint
+        id: api-endpoint
+        run: |
+          INGRESS_HOST=$(kubectl get ingress job-scheduler-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          
+          if [ -n "$INGRESS_HOST" ]; then
+            echo "url=https://${INGRESS_HOST}" >> $GITHUB_OUTPUT
+          else
+            echo "url=http://localhost:8000" >> $GITHUB_OUTPUT
+            echo "port-forward=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Port-forward API server (if needed)
+        if: steps.api-endpoint.outputs.port-forward == 'true'
+        run: |
+          kubectl port-forward svc/job-scheduler-api 8000:8000 &
+          sleep 5
+
+      - name: Run smoke tests
+        env:
+          API_URL: ${{ steps.api-endpoint.outputs.url }}
+          API_KEY: ${{ secrets.API_KEY_PROD }}
+        run: |
+          echo "Running smoke tests against: $API_URL"
+          
+          # Wait for health endpoint
+          echo "Waiting for API to be ready..."
+          for i in {1..60}; do
+            if curl -f -s "${API_URL}/health" > /dev/null 2>&1; then
+              echo "API is ready!"
+              break
+            fi
+            echo "Attempt $i/60: API not ready, waiting 5 seconds..."
+            sleep 5
+          done
+          
+          # Run verification script
+          if [ -f deploy/verify.sh ]; then
+            chmod +x deploy/verify.sh
+            bash deploy/verify.sh "$API_URL" || {
+              echo "Smoke tests failed in production!"
+              exit 1
+            }
+          else
+            # Basic health check
+            HEALTH_STATUS=$(curl -s "${API_URL}/health" | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+            if [ "$HEALTH_STATUS" != "ok" ] && [ "$HEALTH_STATUS" != "degraded" ]; then
+              echo "Health check failed: status=$HEALTH_STATUS"
+              exit 1
+            fi
+            echo "Health check passed: status=$HEALTH_STATUS"
+          fi
+
+      - name: Check pod status
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -l app=job-scheduler
+          
+          echo "=== Recent Logs ==="
+          kubectl logs -l component=api-server --tail=20 || true
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "✅ Deployment to production completed successfully!"
+          # Add notification logic here (Slack, email, etc.)
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed, rolling back..."
+          
+          # Rollback deployments
+          kubectl rollout undo deployment/job-scheduler-api || true
+          kubectl rollout undo deployment/job-scheduler-scheduler || true
+          kubectl rollout undo deployment/job-scheduler-consumer || true
+          
+          echo "Rollback completed. Please investigate the issue."
+          # Add notification logic here

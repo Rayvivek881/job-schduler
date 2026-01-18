@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-scheduler-api
+  labels:
+    app: job-scheduler
+    component: api-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: job-scheduler
+      component: api-server
+  template:
+    metadata:
+      labels:
+        app: job-scheduler
+        component: api-server
+    spec:
+      containers:
+      - name: api-server
+        image: job-scheduler:latest
+        imagePullPolicy: Always
+        command: ["./job-scheduler", "api-server"]
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: APP_ENV
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: job-scheduler-secrets
+              key: API_KEY
+        - name: MAX_REQUESTS_PER_MINUTE
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: MAX_REQUESTS_PER_MINUTE
+        - name: PG_DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_HOST
+        - name: PG_DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_PORT
+        - name: PG_DB_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_DATABASE
+        - name: PG_DB_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_USERNAME
+        - name: PG_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: job-scheduler-secrets
+              key: PG_DB_PASSWORD
+        - name: PG_DB_DEBUG
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_DEBUG
+        - name: PG_DB_SSL
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: PG_DB_SSL
+        - name: KAFKA_BROKERS
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: KAFKA_BROKERS
+        - name: KAFKA_VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: KAFKA_VERSION
+        - name: JOBS_TOPIC
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: JOBS_TOPIC
+        - name: CONSUMER_GROUP
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: CONSUMER_GROUP
+        - name: TICKER_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: TICKER_INTERVAL
+        - name: JOB_EXECUTION_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: job-scheduler-config
+              key: JOB_EXECUTION_TIMEOUT
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-scheduler-api
+  labels:
+    app: job-scheduler
+    component: api-server
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: job-scheduler
+    component: api-server

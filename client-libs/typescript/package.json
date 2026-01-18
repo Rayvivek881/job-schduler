@@ -1,0 +1,27 @@
+{
+  "name": "@contact360/job-scheduler-dag-builders",
+  "version": "1.0.0",
+  "description": "TypeScript utilities for building DAG definitions for the job scheduler system",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "dag",
+    "job-scheduler",
+    "workflow",
+    "typescript"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

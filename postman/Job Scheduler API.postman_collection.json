@@ -1,0 +1,327 @@
+{
+	"info": {
+		"_postman_id": "job-scheduler-api-collection-2026",
+		"name": "Job Scheduler API",
+		"description": "Postman collection for Distributed DAG Job Scheduler API Service.\n\n**Base URL**: {{base_url}}\n**Default Port**: 8000\n**Local Development**: http://localhost:8000\n\n**Authentication**:\n- Health check endpoint: No authentication required\n- All other endpoints: X-API-Key header required\n- API Key: {{api_key}}\n\n## API Structure\n- **System**: Health check endpoint (no auth)\n- **Jobs**: Job CRUD operations (bulk insert, query, update, retry)\n- **DAG**: DAG status and progress tracking\n\n## Features\n- DAG-based job dependencies with automatic resolution\n- Job status tracking and querying\n- DAG status aggregation and progress monitoring\n- Job retry mechanism with configurable intervals\n- Rate limiting and API key authentication\n- Horizontal scaling via Kafka consumer groups\n\n## Usage\n1. Set environment variables: `base_url`, `api_key`\n2. Test health endpoint first (no auth required)\n3. Create jobs with DAG using POST /jobs/bulk-insert/complete-graph\n4. Query jobs using GET /jobs/ with filters\n5. Check DAG status using GET /jobs/dag/status\n6. Monitor progress using GET /jobs/dag/progress\n7. Retry failed jobs using PUT /jobs/:uuid/retry",
+		"schema": "https://schema.postman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "20572666"
+	},
+	"item": [
+		{
+			"name": "System",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Health check endpoint to verify API availability and connectivity.\n\n**Endpoint**: `GET /health`\n\n**Use Case**: Monitor API status, verify connectivity, health checks for load balancers\n\n**Response** (200 OK):\n```json\n{\n  \"status\": \"ok\"\n}\n```\n\n**Note**: This is the only endpoint that does NOT require authentication (no `X-API-Key` header needed)."
+					},
+					"response": []
+				}
+			],
+			"description": "System operational endpoints for health checks and API status monitoring."
+		},
+		{
+			"name": "Jobs",
+			"item": [
+				{
+					"name": "Bulk Insert Complete Graph",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n  {\n    \"uuid\": \"job-a\",\n    \"job_title\": \"Extract Data\",\n    \"job_type\": \"etl\",\n    \"data\": {\n      \"source\": \"s3://bucket/data\",\n      \"format\": \"csv\"\n    },\n    \"retry_count\": 3,\n    \"retry_interval\": 5,\n    \"edges\": [\"job-b\"]\n  },\n  {\n    \"uuid\": \"job-b\",\n    \"job_title\": \"Transform Data\",\n    \"job_type\": \"etl\",\n    \"data\": {\n      \"transform\": \"aggregate\",\n      \"output_format\": \"parquet\"\n    },\n    \"retry_count\": 3,\n    \"retry_interval\": 5,\n    \"edges\": [\"job-c\", \"job-d\"]\n  },\n  {\n    \"uuid\": \"job-c\",\n    \"job_title\": \"Load to Warehouse\",\n    \"job_type\": \"etl\",\n    \"data\": {\n      \"destination\": \"warehouse\",\n      \"table\": \"daily_data\"\n    },\n    \"edges\": []\n  },\n  {\n    \"uuid\": \"job-d\",\n    \"job_title\": \"Generate Report\",\n    \"job_type\": \"report\",\n    \"data\": {\n      \"format\": \"pdf\",\n      \"recipients\": [\"team@company.com\"]\n    },\n    \"edges\": []\n  }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs/bulk-insert/complete-graph",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								"bulk-insert",
+								"complete-graph"
+							]
+						},
+						"description": "Insert jobs with DAG dependencies. Creates jobs and edges in a single transaction with DAG validation (cycle detection and in-degree calculation).\n\n**Endpoint**: `POST /jobs/bulk-insert/complete-graph`\n\n**Request Body**: Array of job nodes, each with:\n- `uuid` (string, required): Unique job identifier\n- `job_title` (string, required): Human-readable job name\n- `job_type` (string, required): Type of job (e.g., \"etl\", \"report\")\n- `data` (object, optional): Job payload as JSONB\n- `retry_count` (int, optional): Number of retries (default: 0)\n- `retry_interval` (int, optional): Minutes between retries (default: 30)\n- `edges` (array, optional): Array of target UUIDs (dependencies)\n\n**Response** (200 OK):\n```json\n{\n  \"message\": \"Jobs inserted successfully\"\n}\n```\n\n**Error Responses**:\n- `400 Bad Request`: Invalid DAG (cycles detected or invalid structure)\n- `400 Bad Request`: Duplicate job UUIDs\n- `401 Unauthorized`: Invalid or missing API key\n- `429 Too Many Requests`: Rate limit exceeded\n- `500 Internal Server Error`: Database or processing error\n\n**Note**: Maximum 5000 nodes per request (configurable via `MaxNodesPerRequest`)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Jobs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/jobs/?status=open&status=processing&page=1&limit=50",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								""
+							],
+							"query": [
+								{
+									"key": "uuid",
+									"value": "",
+									"description": "Filter by job UUIDs (can specify multiple)",
+									"disabled": true
+								},
+								{
+									"key": "status",
+									"value": "open",
+									"description": "Filter by status (can specify multiple): open, in_queue, processing, completed, failed",
+									"disabled": false
+								},
+								{
+									"key": "status",
+									"value": "processing",
+									"description": "Additional status filter",
+									"disabled": false
+								},
+								{
+									"key": "degree",
+									"value": "",
+									"description": "Filter by degree (in-degree count)",
+									"disabled": true
+								},
+								{
+									"key": "run_after",
+									"value": "",
+									"description": "Filter jobs scheduled after timestamp (ISO 8601 format)",
+									"disabled": true
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number for pagination (1-indexed)",
+									"disabled": false
+								},
+								{
+									"key": "limit",
+									"value": "50",
+									"description": "Number of results per page (max 100)",
+									"disabled": false
+								}
+							]
+						},
+						"description": "Get jobs with optional filters. Supports filtering by UUID, status, degree, run_after, and pagination.\n\n**Endpoint**: `GET /jobs/`\n\n**Query Parameters**:\n- `uuid` (array, optional): Filter by job UUIDs\n- `status` (array, optional): Filter by status values\n- `degree` (int, optional): Filter by in-degree count\n- `run_after` (timestamp, optional): Filter jobs scheduled after timestamp\n- `page` (int, optional): Page number (default: 1)\n- `limit` (int, optional): Results per page (default: 100, max: 100)\n\n**Response** (200 OK):\n```json\n{\n  \"data\": [\n    {\n      \"id\": 1,\n      \"uuid\": \"job-a\",\n      \"job_title\": \"Extract Data\",\n      \"job_type\": \"etl\",\n      \"status\": \"processing\",\n      \"degree\": 0,\n      \"data\": {...},\n      \"job_response\": {...},\n      \"retry_count\": 3,\n      \"retry_interval\": 5,\n      \"run_after\": \"2024-01-15T10:00:00Z\",\n      \"created_at\": \"2024-01-15T09:00:00Z\",\n      \"updated_at\": \"2024-01-15T10:05:00Z\"\n    }\n  ]\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Job by UUID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/jobs/job-a",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								"job-a"
+							]
+						},
+						"description": "Get a single job by UUID.\n\n**Endpoint**: `GET /jobs/:uuid`\n\n**Path Parameters**:\n- `uuid` (string, required): Job UUID\n\n**Response** (200 OK):\n```json\n{\n  \"data\": {\n    \"id\": 1,\n    \"uuid\": \"job-a\",\n    \"job_title\": \"Extract Data\",\n    \"job_type\": \"etl\",\n    \"status\": \"completed\",\n    \"degree\": 0,\n    \"data\": {...},\n    \"job_response\": {...},\n    \"retry_count\": 3,\n    \"retry_interval\": 5,\n    \"run_after\": \"2024-01-15T10:00:00Z\",\n    \"created_at\": \"2024-01-15T09:00:00Z\",\n    \"updated_at\": \"2024-01-15T10:15:00Z\"\n  }\n}\n```\n\n**Error Responses**:\n- `404 Not Found`: Job not found\n- `401 Unauthorized`: Invalid or missing API key"
+					},
+					"response": []
+				},
+				{
+					"name": "Update and Retry Job",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"data\": {\n    \"updated\": \"payload\",\n    \"source\": \"s3://bucket/new-data\"\n  },\n  \"retry_count\": 5\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/jobs/job-a/retry",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								"job-a",
+								"retry"
+							]
+						},
+						"description": "Update a job and retrigger it. Updates job data and/or retry count, then sets status to 'open' and resets run_after to current time.\n\n**Endpoint**: `PUT /jobs/:uuid/retry`\n\n**Path Parameters**:\n- `uuid` (string, required): Job UUID\n\n**Request Body**:\n- `data` (object, optional): Updated job payload\n- `retry_count` (int, optional): Updated retry count\n\n**Response** (200 OK):\n```json\n{\n  \"message\": \"Job updated and retriggered successfully\"\n}\n```\n\n**Error Responses**:\n- `404 Not Found`: Job not found\n- `400 Bad Request`: Invalid request body\n- `401 Unauthorized`: Invalid or missing API key"
+					},
+					"response": []
+				}
+			],
+			"description": "Job CRUD operations for creating, querying, and updating jobs."
+		},
+		{
+			"name": "DAG",
+			"item": [
+				{
+					"name": "Get DAG Status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/jobs/dag/status?uuids=job-a&uuids=job-b&uuids=job-c&uuids=job-d",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								"dag",
+								"status"
+							],
+							"query": [
+								{
+									"key": "uuids",
+									"value": "job-a",
+									"description": "Job UUID (can specify multiple)"
+								},
+								{
+									"key": "uuids",
+									"value": "job-b",
+									"description": "Additional job UUID"
+								},
+								{
+									"key": "uuids",
+									"value": "job-c",
+									"description": "Additional job UUID"
+								},
+								{
+									"key": "uuids",
+									"value": "job-d",
+									"description": "Additional job UUID"
+								}
+							]
+						},
+						"description": "Get aggregated DAG status for multiple jobs. Returns overall DAG status, status breakdown, individual job statuses, and progress metrics.\n\n**Endpoint**: `GET /jobs/dag/status`\n\n**Query Parameters**:\n- `uuids` (array, required): Job UUIDs to include in DAG status calculation\n\n**Response** (200 OK):\n```json\n{\n  \"dag_status\": \"processing\",\n  \"total_jobs\": 4,\n  \"status_breakdown\": {\n    \"completed\": 2,\n    \"processing\": 1,\n    \"open\": 1\n  },\n  \"jobs\": {\n    \"job-a\": {\n      \"uuid\": \"job-a\",\n      \"job_title\": \"Extract Data\",\n      \"status\": \"completed\",\n      \"degree\": 0,\n      \"created_at\": \"2024-01-15T09:00:00Z\",\n      \"updated_at\": \"2024-01-15T10:15:00Z\"\n    },\n    \"job-b\": {\n      \"uuid\": \"job-b\",\n      \"job_title\": \"Transform Data\",\n      \"status\": \"processing\",\n      \"degree\": 0,\n      \"created_at\": \"2024-01-15T09:00:00Z\",\n      \"updated_at\": \"2024-01-15T10:20:00Z\"\n    }\n  },\n  \"progress\": {\n    \"completed\": 2,\n    \"failed\": 0,\n    \"processing\": 1,\n    \"pending\": 1,\n    \"percentage\": 50.0\n  }\n}\n```\n\n**DAG Status Values**:\n- `completed`: All jobs completed\n- `failed`: One or more jobs failed\n- `processing`: One or more jobs are processing or in queue\n- `pending`: All jobs are open (not started)\n- `partial`: Mixed states\n\n**Error Responses**:\n- `400 Bad Request`: No UUIDs provided\n- `401 Unauthorized`: Invalid or missing API key"
+					},
+					"response": []
+				},
+				{
+					"name": "Get DAG Progress",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "API key for authentication"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/jobs/dag/progress?uuids=job-a&uuids=job-b&uuids=job-c&uuids=job-d",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"jobs",
+								"dag",
+								"progress"
+							],
+							"query": [
+								{
+									"key": "uuids",
+									"value": "job-a",
+									"description": "Job UUID (can specify multiple)"
+								},
+								{
+									"key": "uuids",
+									"value": "job-b",
+									"description": "Additional job UUID"
+								},
+								{
+									"key": "uuids",
+									"value": "job-c",
+									"description": "Additional job UUID"
+								},
+								{
+									"key": "uuids",
+									"value": "job-d",
+									"description": "Additional job UUID"
+								}
+							]
+						},
+						"description": "Get DAG progress summary with completion percentage. Lightweight version of DAG status focused on progress metrics.\n\n**Endpoint**: `GET /jobs/dag/progress`\n\n**Query Parameters**:\n- `uuids` (array, required): Job UUIDs to include in progress calculation\n\n**Response** (200 OK):\n```json\n{\n  \"progress\": {\n    \"completed\": 2,\n    \"failed\": 0,\n    \"processing\": 1,\n    \"pending\": 1,\n    \"percentage\": 50.0\n  },\n  \"status_breakdown\": {\n    \"completed\": 2,\n    \"processing\": 1,\n    \"open\": 1\n  },\n  \"dag_status\": \"processing\"\n}\n```\n\n**Error Responses**:\n- `400 Bad Request`: No UUIDs provided\n- `401 Unauthorized`: Invalid or missing API key"
+					},
+					"response": []
+				}
+			],
+			"description": "DAG status and progress tracking endpoints for monitoring job execution across dependencies."
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "your-secret-api-key",
+			"type": "string"
+		}
+	]
+}

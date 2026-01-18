@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-scheduler-config
+  labels:
+    app: job-scheduler
+data:
+  # Application Configuration
+  APP_ENV: "production"
+  MAX_REQUESTS_PER_MINUTE: "5000"
+  
+  # Database Configuration
+  PG_DB_HOST: "postgres-service"
+  PG_DB_PORT: "5432"
+  PG_DB_DATABASE: "job_scheduler"
+  PG_DB_USERNAME: "postgres"
+  PG_DB_DEBUG: "false"
+  PG_DB_SSL: "true"
+  
+  # Kafka Configuration
+  KAFKA_BROKERS: "kafka1:9092,kafka2:9092,kafka3:9092"
+  KAFKA_VERSION: "3.6.0"
+  JOBS_TOPIC: "jobs-topic"
+  CONSUMER_GROUP: "jobs-consumer-group"
+  
+  # Job Configuration
+  TICKER_INTERVAL: "1"
+  JOB_EXECUTION_TIMEOUT: "30"
