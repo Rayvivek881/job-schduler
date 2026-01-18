@@ -75,7 +75,6 @@ func (b *BaseConsumer) handleMessage(msg *sarama.ConsumerMessage) error {
 		job.Status = constants.CompletedJobStatus
 		err = b.edgesRepo.UpdateNodeDegree(job.UUID)
 		if err != nil {
-			job.Status = constants.CompletedJobStatus
 			job.AddToJobResponse("runtime_errors", err.Error())
 		}
 	}
