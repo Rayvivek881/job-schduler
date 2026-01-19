@@ -31,7 +31,7 @@ func (e *EdgesStruct) CreateEdges(edges []*ModelEdges) error {
 
 func (e *EdgesStruct) UpdateNodeDegree(source string) error {
 	_, err := e.PgDbClient.NewUpdate().
-		Model((*ModelJobs)(nil)).
+		Model((*ModelJobNodes)(nil)).
 		Set("degree = degree - 1").
 		Where("uuid IN (?)",
 			e.PgDbClient.NewSelect().

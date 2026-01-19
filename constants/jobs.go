@@ -10,7 +10,9 @@ var (
 	RetryingJobStatus  = "retrying"
 	MaxNodesPerRequest = 5000
 	MaxPageLimit       = 100
+	FirstTimeJobType   = "first_time"
+	RetryJobType       = "retry"
 
-	FirstTimeJobType = "first_time"
-	RetryJobType     = "retry"
+	InsertCsvFile = "insert_csv_file"
+	ExportCsvFile = "export_csv_file"
 )

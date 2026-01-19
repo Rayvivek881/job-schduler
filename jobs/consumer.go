@@ -1,14 +1,14 @@
-package consumers
+package jobs
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 	"vivek-ray/clients"
 	"vivek-ray/conf"
 	"vivek-ray/connections"
 	"vivek-ray/constants"
+	"vivek-ray/jobs/processers"
 	"vivek-ray/models"
 
 	"github.com/IBM/sarama"
@@ -16,7 +16,7 @@ import (
 )
 
 type BaseConsumer struct {
-	jobsRepo    models.JobsSvcRepo
+	jobsRepo    models.JobNodeSvcRepo
 	edgesRepo   models.EdgesSvcRepo
 	kafkaReader *clients.KafkaReader
 }
@@ -32,7 +32,7 @@ func NewBaseConsumer() BaseConsumerRepo {
 	}
 
 	return &BaseConsumer{
-		jobsRepo:    models.JobsRepository(connections.PgDBConnection.Client),
+		jobsRepo:    models.JobNodeRepository(connections.PgDBConnection.Client),
 		edgesRepo:   models.EdgesRepository(connections.PgDBConnection.Client),
 		kafkaReader: reader,
 	}
@@ -60,17 +60,16 @@ func (b *BaseConsumer) handleMessage(msg *sarama.ConsumerMessage) error {
 	if err != nil {
 		return err
 	}
+
 	job.Status = constants.ProcessingJobStatus
-	switch job.JobType { // TODO: Implement job processing logic based on job.JobType
-	default:
-		err = errors.New("invalid job type")
-	}
+	err = b.processJob(job)
 
 	if err != nil {
 		job.Status = constants.FailedJobStatus
-		job.RetryCount -= 1
+		job.TryCount -= 1
 		job.AddToJobResponse("runtime_errors", err.Error())
 		job.RunAfter = time.Now().Add(time.Duration(job.RetryInterval) * time.Minute)
+
 	} else {
 		job.Status = constants.CompletedJobStatus
 		err = b.edgesRepo.UpdateNodeDegree(job.UUID)
@@ -79,10 +78,11 @@ func (b *BaseConsumer) handleMessage(msg *sarama.ConsumerMessage) error {
 		}
 	}
 
-	return b.jobsRepo.JobsBulkUpsert([]*models.ModelJobs{job})
+	job.UpdatedAt = time.Now()
+	return b.jobsRepo.JobsBulkUpsert([]*models.ModelJobNodes{job})
 }
 
-func (b *BaseConsumer) fetchJob(uuid string) (*models.ModelJobs, error) {
+func (b *BaseConsumer) fetchJob(uuid string) (*models.ModelJobNodes, error) {
 	jobs, err := b.jobsRepo.GetJobs(&models.JobFilters{Uuids: []string{uuid}})
 	if err != nil {
 		return nil, constants.ErrorWrap(constants.ErrJobFetch, err)
@@ -92,8 +92,19 @@ func (b *BaseConsumer) fetchJob(uuid string) (*models.ModelJobs, error) {
 	}
 
 	job := jobs[0]
-	if job.Status != constants.InQueueJobStatus || job.RetryCount == 0 {
-		return nil, constants.ErrJobNotInQueueOrRetryCountZero
+	if job.Status != constants.InQueueJobStatus || job.TryCount == 0 {
+		return nil, constants.ErrJobNotInQueueOrTryCountZero
 	}
 	return job, nil
+}
+
+func (b *BaseConsumer) processJob(job *models.ModelJobNodes) error {
+	switch job.JobType {
+	case constants.InsertCsvFile:
+		return processers.ProcessInsertCsvFile(job)
+	case constants.ExportCsvFile:
+		return processers.ProcessExportCsvFile(job)
+	default:
+		return constants.InvalidJobTypeError(job.JobType)
+	}
 }

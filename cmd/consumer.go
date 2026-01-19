@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"vivek-ray/jobs/consumers"
+	"vivek-ray/jobs"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -20,7 +20,10 @@ var ConsumerCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(context.Background())
 		var wg sync.WaitGroup
 
-		consumer := consumers.NewBaseConsumer()
+		consumer := jobs.NewBaseConsumer()
+		if consumer == nil {
+			log.Fatal().Msg("Failed to initialize consumer")
+		}
 
 		wg.Add(1)
 		go func() {

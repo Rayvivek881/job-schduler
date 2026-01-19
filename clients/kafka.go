@@ -59,8 +59,8 @@ func NewKafkaService(config *KafkaConfig) (*KafkaService, error) {
 
 	saramaConfig.Producer.RequiredAcks = sarama.WaitForAll
 	saramaConfig.Producer.Retry.Max = 3
-	saramaConfig.Producer.Return.Successes = true
-	saramaConfig.Producer.Return.Errors = true
+	saramaConfig.Producer.Return.Successes = false
+	saramaConfig.Producer.Return.Errors = false
 
 	saramaConfig.Consumer.Return.Errors = true
 	saramaConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
@@ -97,7 +97,7 @@ func (k *KafkaService) InitWriter(topic string) (*KafkaWriter, error) {
 
 func (w *KafkaWriter) BulkWrite(values any) error {
 	rv := reflect.ValueOf(values)
-	if rv.Kind() != reflect.Slice {
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
 		return constants.ErrKafkaInvalidInput
 	}
 

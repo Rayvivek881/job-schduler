@@ -14,7 +14,7 @@ import (
 )
 
 type JobScheduler struct {
-	jobsRepo    models.JobsSvcRepo
+	jobsRepo    models.JobNodeSvcRepo
 	edgesRepo   models.EdgesSvcRepo
 	kafkaWriter *clients.KafkaWriter
 }
@@ -27,7 +27,7 @@ func NewJobScheduler() JobSvc {
 	}
 
 	return &JobScheduler{
-		jobsRepo:    models.JobsRepository(connections.PgDBConnection.Client),
+		jobsRepo:    models.JobNodeRepository(connections.PgDBConnection.Client),
 		edgesRepo:   models.EdgesRepository(connections.PgDBConnection.Client),
 		kafkaWriter: kafkaWriter,
 	}
@@ -76,10 +76,12 @@ func (j *JobScheduler) FirstTimeJobs(ctx context.Context, ticker *time.Ticker) {
 			j.kafkaWriter.Close()
 			return
 		case <-ticker.C:
-			curr_time := time.Now()
+			curr_time, minTryCount, degree := time.Now(), 1, 0
 			jobFilter := &models.JobFilters{
-				Status:   []string{constants.OpenJobStatus},
-				RunAfter: &curr_time,
+				Status:      []string{constants.OpenJobStatus},
+				MinTryCount: &minTryCount,
+				RunAfter:    &curr_time,
+				Degree:      &degree,
 			}
 			err := j.InsertJobsToKafka(jobFilter)
 			if err != nil {
@@ -96,10 +98,11 @@ func (j *JobScheduler) RetryJobs(ctx context.Context, ticker *time.Ticker) {
 			j.kafkaWriter.Close()
 			return
 		case <-ticker.C:
-			curr_time := time.Now()
+			curr_time, minTryCount := time.Now(), 1
 			jobFilter := &models.JobFilters{
-				Status:   []string{constants.FailedJobStatus},
-				RunAfter: &curr_time,
+				Status:      []string{constants.FailedJobStatus},
+				MinTryCount: &minTryCount,
+				RunAfter:    &curr_time,
 			}
 			err := j.InsertJobsToKafka(jobFilter)
 			if err != nil {
@@ -115,6 +118,10 @@ func RunJobs(ctx context.Context, args []string) {
 		return
 	}
 	jobType, jobScheduler := args[0], NewJobScheduler()
+	if jobScheduler == nil {
+		log.Fatal().Msg("Failed to initialize job scheduler")
+	}
+
 	ticker := time.NewTicker(time.Duration(conf.JobConfig.TickerInterval) * time.Minute)
 	defer ticker.Stop()
 

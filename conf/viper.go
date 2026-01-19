@@ -18,6 +18,7 @@ type app struct {
 type jobConfig struct {
 	JobInQueuedSize int `mapstructure:"JOB_IN_QUEUE_SIZE"`
 	ParallelJobs    int `mapstructure:"PARALLEL_JOBS"`
+	BatchSize       int `mapstructure:"BATCH_SIZE"`
 	TickerInterval  int `mapstructure:"TICKER_INTERVAL"`
 }
 
@@ -30,6 +31,29 @@ type database struct {
 	PgSQLPassword   string `mapstructure:"PG_DB_PASSWORD"`
 	PgSQLDebug      bool   `mapstructure:"PG_DB_DEBUG"`
 	PgSQLSSL        bool   `mapstructure:"PG_DB_SSL"`
+}
+
+type searchEngine struct {
+	ElasticsearchConnection string `mapstructure:"ELASTICSEARCH_CONNECTION"`
+	ElasticsearchHost       string `mapstructure:"ELASTICSEARCH_HOST"`
+	ElasticsearchPort       string `mapstructure:"ELASTICSEARCH_PORT"`
+	ElasticsearchUser       string `mapstructure:"ELASTICSEARCH_USERNAME"`
+	ElasticsearchPassword   string `mapstructure:"ELASTICSEARCH_PASSWORD"`
+	ElasticsearchDebug      bool   `mapstructure:"ELASTICSEARCH_DEBUG"`
+	ElasticsearchSSL        bool   `mapstructure:"ELASTICSEARCH_SSL"`
+	ElasticsearchAuth       bool   `mapstructure:"ELASTICSEARCH_AUTH"`
+}
+
+type s3Storage struct {
+	S3AccessKey      string `mapstructure:"S3_ACCESS_KEY"`
+	S3SecretKey      string `mapstructure:"S3_SECRET_KEY"`
+	S3Region         string `mapstructure:"S3_REGION"`
+	S3Bucket         string `mapstructure:"S3_BUCKET"`
+	S3Endpoint       string `mapstructure:"S3_ENDPOINT"`
+	S3SSL            bool   `mapstructure:"S3_SSL"`
+	S3Debug          bool   `mapstructure:"S3_DEBUG"`
+	S3URLTTL         int    `mapstructure:"S3_UPLOAD_URL_TTL_HOURS"`
+	S3UploadFilePath string `mapstructure:"S3_UPLOAD_FILE_PATH_PRIFIX"`
 }
 
 type kafka struct {
@@ -47,6 +71,8 @@ var AppConfig = &app{}
 var DatabaseConfig = &database{}
 var JobConfig = &jobConfig{}
 var KafkaConfig = &kafka{}
+var SearchEngineConfig = &searchEngine{}
+var S3StorageConfig = &s3Storage{}
 
 func (v *Viper) Init() {
 	viper.AddConfigPath("./")
@@ -63,6 +89,8 @@ func (v *Viper) Init() {
 	v.unmarshal(&DatabaseConfig)
 	v.unmarshal(&JobConfig)
 	v.unmarshal(&KafkaConfig)
+	v.unmarshal(&SearchEngineConfig)
+	v.unmarshal(&S3StorageConfig)
 	log.Info().Msgf("Viper initialized successfully")
 }
 
@@ -78,6 +106,8 @@ func (v *Viper) setDefaults() {
 		reflect.VisibleFields(reflect.TypeOf(struct{ database }{})),
 		reflect.VisibleFields(reflect.TypeOf(struct{ jobConfig }{})),
 		reflect.VisibleFields(reflect.TypeOf(struct{ kafka }{})),
+		reflect.VisibleFields(reflect.TypeOf(struct{ searchEngine }{})),
+		reflect.VisibleFields(reflect.TypeOf(struct{ s3Storage }{})),
 	}
 	v.setFields(structFields)
 	log.Info().Msgf("Setting defaults for viper, completed")

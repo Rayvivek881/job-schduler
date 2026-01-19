@@ -7,12 +7,12 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type JobsStruct struct {
+type JobNodeStruct struct {
 	PgDbClient *bun.DB
 }
 
-func JobsRepository(db *bun.DB) JobsSvcRepo {
-	return &JobsStruct{
+func JobNodeRepository(db *bun.DB) JobNodeSvcRepo {
+	return &JobNodeStruct{
 		PgDbClient: db,
 	}
 }
@@ -30,16 +30,19 @@ func (f *JobFilters) ToWhere(query *bun.SelectQuery) *bun.SelectQuery {
 	if len(f.Status) > 0 {
 		query = query.Where("status IN (?)", bun.In(f.Status))
 	}
-	return f.DefaultFilters.ToWhere(query)
+	if f.MinTryCount != nil {
+		query = query.Where("try_count >= ?", *f.MinTryCount)
+	}
+	return f.DefaultFilters.ToWhere(query.Where("deleted_at IS NULL"))
 }
 
-type JobsSvcRepo interface {
-	JobsBulkUpsert(jobs []*ModelJobs) error
-	GetJobs(filters *JobFilters) ([]*ModelJobs, error)
+type JobNodeSvcRepo interface {
+	JobsBulkUpsert(jobs []*ModelJobNodes) error
+	GetJobs(filters *JobFilters) ([]*ModelJobNodes, error)
 	GetJobsCount(filters *JobFilters) (int, error)
 }
 
-func (j *JobsStruct) JobsBulkUpsert(jobs []*ModelJobs) error {
+func (j *JobNodeStruct) JobsBulkUpsert(jobs []*ModelJobNodes) error {
 	_, err := j.PgDbClient.NewInsert().
 		Model(&jobs).
 		Exec(context.Background())
@@ -47,15 +50,15 @@ func (j *JobsStruct) JobsBulkUpsert(jobs []*ModelJobs) error {
 	return err
 }
 
-func (j *JobsStruct) GetJobs(filters *JobFilters) ([]*ModelJobs, error) {
-	var jobs []*ModelJobs
+func (j *JobNodeStruct) GetJobs(filters *JobFilters) ([]*ModelJobNodes, error) {
+	var jobs []*ModelJobNodes
 	query := j.PgDbClient.NewSelect().
-		Model(&ModelJobs{})
+		Model(&ModelJobNodes{})
 
 	err := filters.ToWhere(query).Scan(context.Background(), &jobs)
 	return jobs, err
 }
 
-func (j *JobsStruct) GetJobsCount(filters *JobFilters) (int, error) {
-	return filters.ToWhere(j.PgDbClient.NewSelect().Model(&ModelJobs{})).Count(context.Background())
+func (j *JobNodeStruct) GetJobsCount(filters *JobFilters) (int, error) {
+	return filters.ToWhere(j.PgDbClient.NewSelect().Model(&ModelJobNodes{})).Count(context.Background())
 }
